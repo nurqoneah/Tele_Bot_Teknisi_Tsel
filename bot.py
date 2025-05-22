@@ -8,6 +8,7 @@ import networkx as nx
 from staticmap import StaticMap, CircleMarker, Line
 from PIL import Image
 from io import BytesIO
+import requests
 import io
 import os
 from dotenv import load_dotenv
@@ -33,71 +34,40 @@ def get_column_index(col_name):
     header = sheet.row_values(1)
     return header.index(col_name) + 1
 
-def find_nearest_task(location, tasks):
-    G = ox.graph_from_point(location, dist=3000, network_type='drive')
-    orig_node = ox.distance.nearest_nodes(G, location[1], location[0])
 
-    min_time = float('inf')
+def get_osrm_distance_duration(origin, destination):
+    base_url = "http://router.project-osrm.org/route/v1/driving/"
+    coords = f"{origin[1]},{origin[0]};{destination[1]},{destination[0]}"
+    params = {"overview": "false"}
+    
+    try:
+        response = requests.get(base_url + coords, params=params)
+        data = response.json()
+        if 'routes' in data and data['routes']:
+            route = data['routes'][0]
+            distance_km = round(route['distance'] / 1000, 2)
+            duration_min = round(route['duration'] / 60, 1)
+            return distance_km, duration_min
+    except Exception as e:
+        print(f"OSRM error: {e}")
+
+    return None, None
+
+def find_nearest_task(location, tasks):
+    min_distance = float('inf')
     nearest_task = None
 
     for idx, task in enumerate(tasks):
         if task['status'].lower() == 'available':
             try:
-                dest_node = ox.distance.nearest_nodes(G, task['lon'], task['lat'])
-                length = nx.shortest_path_length(G, orig_node, dest_node, weight='travel_time')
-                if length < min_time:
-                    min_time = length
-                    nearest_task = (idx, task, length)
-            except Exception:
+                distance_km, duration_min = get_osrm_distance_duration(location, (task['lat'], task['lon']))
+                if distance_km is not None and distance_km < min_distance:
+                    min_distance = distance_km
+                    nearest_task = (idx, task, distance_km, duration_min)
+            except:
                 continue
 
     return nearest_task
-
-# def find_nearest_task(location, tasks):
-#     nearest_task = None
-#     min_distance = float('inf')
-#     for idx, task in enumerate(tasks):
-#         if task['status'].lower() == 'available':
-#             task_location = (task['lat'], task['lon'])
-#             distance = geodesic(location, task_location).km
-#             if distance < min_distance:
-#                 min_distance = distance
-#                 nearest_task = (idx, task, distance)
-#     return nearest_task
-
-# def find_nearest_task_by_route(location, tasks):
-#     G = ox.graph_from_point(location, dist=3000, network_type='drive')
-
-#     orig_node = ox.distance.nearest_nodes(G, location[1], location[0])
-#     nearest = None
-#     min_time = float('inf')
-#     best_path = None
-
-#     for idx, task in enumerate(tasks):
-#         if task['status'].lower() != 'available':
-#             continue
-#         dest_coord = (task['lat'], task['lon'])
-#         try:
-#             dest_node = ox.distance.nearest_nodes(G, dest_coord[1], dest_coord[0])
-#             route = nx.shortest_path(G, orig_node, dest_node, weight='travel_time')
-#             time = sum(ox.utils_graph.get_route_edge_attributes(G, route, 'travel_time'))
-#             if time < min_time:
-#                 min_time = time
-#                 best_path = (idx, task, time / 60, route)  # menit
-#         except Exception as e:
-#             continue
-
-#     return best_path, G
-
-
-def add_travel_time(G):
-    for u, v, k, data in G.edges(keys=True, data=True):
-        if 'length' in data and 'speed_kph' in data:
-            speed_mps = (data['speed_kph'] or 30) * 1000 / 3600  # fallback 30 kph
-            data['travel_time'] = data['length'] / speed_mps
-        else:
-            data['travel_time'] = data.get('length', 100) / (30 * 1000 / 3600)
-
 
 keyboard_main = InlineKeyboardMarkup([
     [InlineKeyboardButton("🔍 Search Task", callback_data='search_task')],
@@ -170,20 +140,40 @@ async def task_info(update_or_query, context):
 
 
 def generate_static_map(user_loc, task_loc):
-    G = ox.graph_from_point(user_loc, dist=3000, network_type='drive')
-    orig_node = ox.distance.nearest_nodes(G, user_loc[1], user_loc[0])
-    dest_node = ox.distance.nearest_nodes(G, task_loc[1], task_loc[0])
-    route = nx.shortest_path(G, orig_node, dest_node, weight='travel_time')
-    route_coords = [(G.nodes[n]['x'], G.nodes[n]['y']) for n in route]
+    # Hitung bounding box dari user dan task
+    min_lat = min(user_loc[0], task_loc[0])
+    max_lat = max(user_loc[0], task_loc[0])
+    min_lon = min(user_loc[1], task_loc[1])
+    max_lon = max(user_loc[1], task_loc[1])
 
-    m = StaticMap(600, 400, url_template='https://tile.openstreetmap.org/{z}/{x}/{y}.png')
-    m.add_marker(CircleMarker((user_loc[1], user_loc[0]), 'blue', 12))
-    m.add_marker(CircleMarker((task_loc[1], task_loc[0]), 'red', 12))
-    m.add_line(Line(route_coords, 'green', 3))
+    # Tambahkan margin sedikit agar marker tidak mepet pinggir
+    margin = 0.01
+    min_lat -= margin
+    max_lat += margin
+    min_lon -= margin
+    max_lon += margin
 
-    image = m.render()
-    output = io.BytesIO()
-    image.save(output, format='PNG')
+    # Marker Geoapify
+    user_marker = f"lonlat:{user_loc[1]},{user_loc[0]};type:awesome;color:blue;icon:user"
+    task_marker = f"lonlat:{task_loc[1]},{task_loc[0]};type:awesome;color:red;icon:flag"
+
+    api_key = os.getenv("GEOAPIFY_API_KEY")
+
+    # Gunakan bounding box agar zoom otomatis
+    url = (
+        f"https://maps.geoapify.com/v1/staticmap?"
+        f"style=osm-bright&"
+        f"bbox={min_lon},{min_lat},{max_lon},{max_lat}&"
+        f"size=600x400&"
+        f"marker={user_marker}&marker={task_marker}&"
+        f"apiKey={api_key}"
+    )
+
+    response = requests.get(url)
+    if response.status_code != 200:
+        raise RuntimeError(f"Map request failed: {response.status_code}")
+
+    output = io.BytesIO(response.content)
     output.seek(0)
     return output
 
@@ -210,13 +200,16 @@ async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Tidak ada tugas tersedia saat ini.")
         return
 
-    idx_task, task, travel_time = nearest
+    idx_task, task, distance_km, duration_min = nearest
     user_states[user_id] = {'task_idx': idx_task}
 
     image = generate_static_map(user_loc, (task['lat'], task['lon']))
     await update.message.reply_photo(photo=image)
     await update.message.reply_text(
-        f"🎯 Tugas ditemukan: {task['order_id']}\nEstimasi waktu tempuh: {travel_time / 6:.1f} menit\nAmbil tugas ini?",
+       f"🎯 Tugas ditemukan: {task['order_id']}\n"
+        f"📍 Estimasi jarak: {distance_km:.1f} km\n"
+        # f"⏱️ Estimasi waktu: {duration_min:.1f} menit\n"
+        f"Ambil tugas ini?",
         reply_markup=keyboard_take
     )   
 
