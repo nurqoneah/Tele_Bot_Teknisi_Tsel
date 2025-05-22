@@ -20,7 +20,7 @@ def get_sheet(sheet_name):
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/drive"
     ]
-    creds_json = os.getenv('GOOGLE_SHEETS_CREDENTIALS')
+    creds_json = os.getenv('SHEETS_CREDENTIALS')
     creds_dict = json.loads(creds_json)
 
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
