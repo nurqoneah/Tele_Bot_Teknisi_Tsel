@@ -158,6 +158,8 @@ def generate_static_map(user_loc, task_loc):
     task_marker = f"lonlat:{task_loc[1]},{task_loc[0]};type:awesome;color:red;icon:flag"
 
     api_key = os.getenv("GEOAPIFY_API")
+    if not api_key:
+        raise RuntimeError("MAPS_API_KEY tidak ditemukan di environment variables")
 
     # Gunakan bounding box agar zoom otomatis
     url = (
