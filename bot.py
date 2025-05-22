@@ -176,7 +176,7 @@ def generate_static_map(user_loc, task_loc):
     route = nx.shortest_path(G, orig_node, dest_node, weight='travel_time')
     route_coords = [(G.nodes[n]['x'], G.nodes[n]['y']) for n in route]
 
-    m = StaticMap(600, 400)
+    m = StaticMap(600, 400, url_template='https://tile.openstreetmap.org/{z}/{x}/{y}.png')
     m.add_marker(CircleMarker((user_loc[1], user_loc[0]), 'blue', 12))
     m.add_marker(CircleMarker((task_loc[1], task_loc[0]), 'red', 12))
     m.add_line(Line(route_coords, 'green', 3))
