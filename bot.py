@@ -157,7 +157,7 @@ def generate_static_map(user_loc, task_loc):
     user_marker = f"lonlat:{user_loc[1]},{user_loc[0]};type:awesome;color:blue;icon:user"
     task_marker = f"lonlat:{task_loc[1]},{task_loc[0]};type:awesome;color:red;icon:flag"
 
-    api_key = os.getenv("GEOAPIFY_API_KEY")
+    api_key = os.getenv("GEOAPIFY_API")
 
     # Gunakan bounding box agar zoom otomatis
     url = (
